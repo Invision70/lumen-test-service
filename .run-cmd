@@ -1,0 +1,22 @@
+# Ubuntu
+sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt/ `lsb_release -cs`-pgdg main" >> /etc/apt/sources.list.d/pgdg.list'
+wget -q https://www.postgresql.org/media/keys/ACCC4CF8.asc -O - | sudo apt-key add -
+sudo apt-get update
+sudo apt-get install postgresql-9.5 postgresql-contrib
+sudo apt-get install php5-pgsql
+
+# Login
+sudo su - postgres
+psql
+---
+# sudo su - postgres
+$ createdb testservice
+$ psql -s testservice
+# create user someuser password 'somepassword';
+# GRANT ALL PRIVILEGES ON DATABASE testservice TO someuser;
+
+# TODO nginx latest
+
+
+
+php artisan migrate
