@@ -4,8 +4,6 @@ MAINTAINER Invision <invision70@gmail.com>
 # LABEL todokey.type="service"
 
 ENV SERVICE_ALIAS test-service
-ENV SERVICE_PATH /var/www/services/$SERVICE_ALIAS
-ENV SERVICE_PORT 80
 ENV PG_USER someuser
 ENV PG_PWD somepassword
 ENV GITHUB https://github.com/Invision70/lumen-test-service
@@ -23,17 +21,22 @@ RUN sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt/ `lsb_release -cs`-
 RUN apt-get install -y wget
 RUN wget -q https://www.postgresql.org/media/keys/ACCC4CF8.asc -O - | apt-key add -
 
+RUN apt-get -y install software-properties-common
+RUN add-apt-repository -y ppa:nginx/stable
+RUN add-apt-repository -y ppa:ondrej/php5-oldstable
+
 RUN apt-get update && apt-get install -y \
-    python-software-properties \
-    software-properties-common \
     postgresql-9.5 \
     postgresql-contrib \
     nginx \
     memcached \
+    pwgen \
+    python-setuptools \
     curl \
     git \
     mercurial \
     unzip \
+    nano \
     php5-fpm \
     php5-pgsql \
     php5-memcached \
@@ -45,39 +48,49 @@ RUN apt-get update && apt-get install -y \
 # Install Composer
 RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
 
-# nginx service conf
-COPY ./nginx.conf /etc/nginx/sites-enabled/$SERVICE_ALIAS
+# php-fpm config
+RUN sed -i -e "s/;cgi.fix_pathinfo=1/cgi.fix_pathinfo=0/g" /etc/php5/fpm/php.ini
+RUN sed -i -e "s/upload_max_filesize\s*=\s*2M/upload_max_filesize = 100M/g" /etc/php5/fpm/php.ini
+RUN sed -i -e "s/post_max_size\s*=\s*8M/post_max_size = 100M/g" /etc/php5/fpm/php.ini
+RUN sed -i -e "s/;daemonize\s*=\s*yes/daemonize = no/g" /etc/php5/fpm/php-fpm.conf
+RUN sed -i -e "s/;catch_workers_output\s*=\s*yes/catch_workers_output = yes/g" /etc/php5/fpm/pool.d/www.conf
+RUN find /etc/php5/cli/conf.d/ -name "*.ini" -exec sed -i -re 's/^(\s*)#(.*)/\1;\2/g' {} \;
+
+# Supervisor Config
+RUN /usr/bin/easy_install supervisor
+RUN /usr/bin/easy_install supervisor-stdout
+ADD ./supervisord.conf /etc/supervisord.conf
+
+# nginx conf
 RUN rm /etc/nginx/sites-enabled/default
+COPY ./nginx.conf /etc/nginx/sites-enabled/service
+
+# nginx config
+RUN sed -i -e"s/keepalive_timeout\s*65/keepalive_timeout 2/" /etc/nginx/nginx.conf
+RUN sed -i -e"s/keepalive_timeout 2/keepalive_timeout 2;\n\tclient_max_body_size 100m/" /etc/nginx/nginx.conf
+RUN echo "daemon off;" >> /etc/nginx/nginx.conf
 
 # Postgres user
 USER postgres
 RUN /etc/init.d/postgresql start &&\
     psql --command "CREATE USER $PG_USER WITH SUPERUSER PASSWORD '$PG_PWD';" &&\
-    createdb -O $PG_USER $SERVICE_ALIAS
+    createdb -O $PG_USER $SERVICE_ALIAS &&\
+    /etc/init.d/postgresql stop
 
 # Adjust PostgreSQL configuration so that remote connections to the database are possible.
 RUN echo "host all  all    0.0.0.0/0  md5" >> /etc/postgresql/9.5/main/pg_hba.conf
 RUN echo "listen_addresses='*'" >> /etc/postgresql/9.5/main/postgresql.conf
 
 USER root
-# Service initialization
-VOLUME ["$SERVICE_PATH"]
-# copy project on initial
-ADD . $SERVICE_PATH
-RUN chown -R www-data:www-data $SERVICE_PATH
-RUN chmod -R 0777 $SERVICE_PATH
 
-# install components
-WORKDIR $SERVICE_PATH
-RUN composer install
+ADD ./start.sh /start.sh
+RUN chmod 755 /start.sh
 
 # private expose
 EXPOSE 5432
-EXPOSE $SERVICE_PORT
+EXPOSE 80
 
-VOLUME ["/etc/postgresql", "/var/log/postgresql", "/var/lib/postgresql"]
+VOLUME ["/var/www", "/etc/postgresql", "/var/log/postgresql", "/var/lib/postgresql"]
 
 # Set the default command to run when starting the container
-CMD ["/usr/lib/postgresql/9.5/bin/postgres", "-D", "/var/lib/postgresql/9.5/main", "-c", "config_file=/etc/postgresql/9.5/main/postgresql.conf"]
-CMD service nginx start
-CMD service php5-fpm start
+CMD ["/bin/bash", "/start.sh"]
